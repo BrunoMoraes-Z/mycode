@@ -49,11 +49,15 @@ const budget = {
 
 const meter = (status: string, percent: number) => ({ status, percent, resetsAt: "2026-10-24T17:00:00.000Z" })
 
-/** Reads usage limits for a location whose active OpenCode Console connection resolves to `credential`. */
+/**
+ * Reads usage limits for a location whose active OpenCode Console connection resolves to `credential`, and whose
+ * GitHub Copilot connection resolves to `copilot`.
+ */
 const read = (
   credential: Credential.Value | undefined,
   respond: (url: string) => Response,
   requests: HttpClientRequest.HttpClientRequest[] = [],
+  copilot?: Credential.Value,
 ) =>
   Effect.flatMap(UsageLimits.Service, (limits) => limits.get()).pipe(
     Effect.provide(
@@ -64,16 +68,21 @@ const read = (
               revision: () => 0,
               get: unused,
               connection: {
-                active: () =>
-                  Effect.succeed(
-                    credential && {
+                active: (integrationID) => {
+                  const value = integrationID === "github-copilot" ? copilot : credential
+                  return Effect.succeed(
+                    value && {
                       type: "credential" as const,
-                      id: Credential.ID.make("console"),
+                      id: Credential.ID.make(integrationID === "github-copilot" ? "copilot" : "console"),
                       label: "Anomaly",
                       method: "oauth" as const,
                     },
+                  )
+                },
+                resolve: (connection) =>
+                  Effect.succeed(
+                    connection.type === "credential" && connection.id === "copilot" ? copilot : credential,
                   ),
-                resolve: () => Effect.succeed(credential),
                 key: unused,
                 external: unused,
                 activate: unused,
@@ -203,6 +212,101 @@ it.effect("reports a Console that can't answer as unavailable", () =>
         : Response.json({ type: "error" }, { status: 403 }),
     ).pipe(Effect.exit)
 
+    expect(Exit.isFailure(exit) && Exit.findErrorOption(exit)).toMatchObject({
+      value: { _tag: "UsageLimits.UnavailableError" },
+    })
+  }),
+)
+
+const copilot = Credential.OAuth.make({
+  type: "oauth",
+  methodID: Integration.MethodID.make("device"),
+  access: "gho_copilot",
+  refresh: "gho_copilot",
+  expires: 0,
+})
+
+const snapshot = (input: { entitlement: number; remaining: number; percent: number; unlimited?: boolean }) => ({
+  entitlement: input.entitlement,
+  remaining: Math.floor(input.remaining),
+  quota_remaining: input.remaining,
+  percent_remaining: input.percent,
+  unlimited: input.unlimited ?? false,
+  overage_permitted: true,
+  overage_count: 0,
+  quota_id: "premium_interactions",
+  credits_used: 665,
+})
+
+it.effect("reads the GitHub Copilot plan's AI credits with the stored GitHub token", () =>
+  Effect.gen(function* () {
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      undefined,
+      () =>
+        Response.json({
+          copilot_plan: "business",
+          token_based_billing: true,
+          quota_reset_date_utc: "2026-12-01T00:00:00.000Z",
+          quota_snapshots: {
+            chat: snapshot({ entitlement: 0, remaining: 0, percent: 100, unlimited: true }),
+            premium_interactions: snapshot({ entitlement: 25000, remaining: 24204.3, percent: 96.8 }),
+          },
+        }),
+      requests,
+      copilot,
+    )
+
+    expect(requests.map((request) => [request.url, request.headers.authorization])).toEqual([
+      ["https://api.github.com/copilot_internal/user", "Bearer gho_copilot"],
+    ])
+    expect(limits).toEqual({
+      budgets: [],
+      copilot: {
+        plan: "business",
+        tokenBased: true,
+        resetsAt: Date.parse("2026-12-01T00:00:00.000Z"),
+        quotas: [
+          {
+            id: "chat",
+            entitlement: 0,
+            remaining: 0,
+            percentRemaining: 100,
+            unlimited: true,
+            overagePermitted: true,
+            overageCount: 0,
+          },
+          {
+            id: "premium_interactions",
+            entitlement: 25000,
+            remaining: 24204.3,
+            percentRemaining: 96.8,
+            unlimited: false,
+            overagePermitted: true,
+            overageCount: 0,
+          },
+        ],
+      },
+    })
+  }),
+)
+
+it.effect("asks a GitHub Enterprise Copilot sign-in's own API host", () =>
+  Effect.gen(function* () {
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    yield* read(undefined, () => Response.json({ quota_snapshots: {} }), requests, {
+      ...copilot,
+      metadata: { enterpriseUrl: "ghe.example.com" },
+    })
+    expect(requests.map((request) => request.url)).toEqual(["https://api.ghe.example.com/copilot_internal/user"])
+  }),
+)
+
+it.effect("reports a GitHub Copilot quota lookup that fails as unavailable", () =>
+  Effect.gen(function* () {
+    const exit = yield* read(undefined, () => new Response("bad credentials", { status: 401 }), [], copilot).pipe(
+      Effect.exit,
+    )
     expect(Exit.isFailure(exit) && Exit.findErrorOption(exit)).toMatchObject({
       value: { _tag: "UsageLimits.UnavailableError" },
     })

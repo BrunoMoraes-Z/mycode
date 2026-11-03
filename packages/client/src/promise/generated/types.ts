@@ -366,6 +366,16 @@ export type WebSearchResult = { url: string; title?: string; content?: string; t
 
 export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: number }
 
+export type UsageLimitsCopilotQuota = {
+  id: string
+  entitlement: number
+  remaining: number
+  percentRemaining: number
+  unlimited: boolean
+  overagePermitted: boolean
+  overageCount: number
+}
+
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigCompactionPercent = string
@@ -941,6 +951,13 @@ export type VcsInfo = { provider?: string; branch: VcsBranch }
 export type WebSearchProvider = { id: WebSearchID; name: string }
 
 export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMeter; monthly: UsageLimitsMeter }
+
+export type UsageLimitsCopilot = {
+  plan: string
+  tokenBased: boolean
+  resetsAt?: number
+  quotas: Array<UsageLimitsCopilotQuota>
+}
 
 export type ConfigModelCapabilities = {
   tools?: boolean
@@ -2527,9 +2544,10 @@ export type ConfigEntry =
   | { type: "directory"; path: AbsolutePath }
 
 export type UsageLimitsInfo = {
-  workspace: { id: string; name?: string; usageURL: string }
+  workspace?: { id: string; name?: string; usageURL: string }
   go?: UsageLimitsGo
   budgets: Array<UsageLimitsBudget>
+  copilot?: UsageLimitsCopilot
 }
 
 export type GenerateImageResponse = { data: GenerateImageResult }

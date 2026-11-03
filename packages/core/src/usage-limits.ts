@@ -20,7 +20,7 @@ export class UnavailableError extends Schema.TaggedError<UnavailableError>()("Us
 }) {}
 
 export interface Interface {
-  /** The usage limits of the OpenCode Console workspace this location is signed in to, if it is. */
+  /** The usage limits of the OpenCode Console workspace and GitHub Copilot subscription this location is signed in to. */
   readonly get: () => Effect.Effect<Info | undefined, UnavailableError>
 }
 
@@ -33,6 +33,44 @@ export const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
 
     const get = Effect.fn("UsageLimits.get")(function* () {
+      const [consoleLimits, copilot] = yield* Effect.all([readConsole(), readCopilot()], { concurrency: 2 })
+      if (!consoleLimits && !copilot) return undefined
+      return { ...consoleLimits, budgets: consoleLimits?.budgets ?? [], ...(copilot ? { copilot } : {}) }
+    })
+
+    const readCopilot = Effect.fnUntraced(function* () {
+      const connection = yield* integrations.connection.active(Integration.ID.make("github-copilot"))
+      if (!connection) return undefined
+      const credential = yield* integrations.connection
+        .resolve(connection)
+        .pipe(Effect.mapError((error) => new UnavailableError({ message: error.message })))
+      if (!credential || credential.type !== "oauth") return undefined
+      const enterprise = credential.metadata?.enterpriseUrl
+      const api = typeof enterprise === "string" ? `https://api.${enterprise}` : "https://api.github.com"
+      return yield* HttpClient.withScope(http)
+        .execute(
+          HttpClientRequest.get(`${api}/copilot_internal/user`).pipe(
+            HttpClientRequest.acceptJson,
+            HttpClientRequest.bearerToken(credential.refresh),
+            HttpClientRequest.setHeaders({ "User-Agent": "opencode", "X-GitHub-Api-Version": "2025-04-01" }),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(CopilotUser)),
+          Effect.map(copilotUsage),
+          Effect.scoped,
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(15),
+            orElse: () => Effect.fail(new Error("timed out")),
+          }),
+          Effect.mapError(
+            (error) => new UnavailableError({ message: `GitHub Copilot usage is unavailable: ${error.message}` }),
+          ),
+        )
+    })
+
+    const readConsole = Effect.fnUntraced(function* () {
       const connection = yield* integrations.connection.active(Integration.ID.make("opencode"))
       if (!connection) return undefined
       const credential = yield* integrations.connection
@@ -189,4 +227,41 @@ function readGo(
 
 function meter(value: typeof GoMeter.Type) {
   return { percent: value.percent, limited: value.status === "rate-limited", resetsAt: value.resetsAt.getTime() }
+}
+
+// The parts of `GET /copilot_internal/user` that describe the plan's quotas.
+const CopilotSnapshot = Schema.Struct({
+  entitlement: Schema.Finite,
+  remaining: Schema.Finite,
+  quota_remaining: Schema.optional(Schema.Finite),
+  percent_remaining: Schema.Finite,
+  unlimited: Schema.Boolean,
+  overage_permitted: Schema.optional(Schema.Boolean),
+  overage_count: Schema.optional(Schema.Finite),
+})
+const CopilotUser = Schema.Struct({
+  copilot_plan: Schema.optional(Schema.String),
+  token_based_billing: Schema.optional(Schema.Boolean),
+  quota_reset_date_utc: Schema.optional(Schema.String),
+  quota_reset_date: Schema.optional(Schema.String),
+  quota_snapshots: Schema.optional(Schema.Record(Schema.String, CopilotSnapshot)),
+})
+
+function copilotUsage(user: typeof CopilotUser.Type): UsageLimits.Copilot {
+  const reset = Date.parse(user.quota_reset_date_utc ?? user.quota_reset_date ?? "")
+  return {
+    plan: user.copilot_plan ?? "unknown",
+    tokenBased: user.token_based_billing ?? false,
+    ...(Number.isFinite(reset) ? { resetsAt: reset } : {}),
+    quotas: Object.entries(user.quota_snapshots ?? {}).map(([id, quota]) => ({
+      id,
+      entitlement: quota.entitlement,
+      // AI credits are fractional; `remaining` is rounded down.
+      remaining: quota.quota_remaining ?? quota.remaining,
+      percentRemaining: Math.min(100, Math.max(0, quota.percent_remaining)),
+      unlimited: quota.unlimited,
+      overagePermitted: quota.overage_permitted ?? false,
+      overageCount: quota.overage_count ?? 0,
+    })),
+  }
 }

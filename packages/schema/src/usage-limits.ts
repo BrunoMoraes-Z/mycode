@@ -62,7 +62,33 @@ export const Budget = Schema.Struct({
   resetsAt: Instant,
 }).annotate({ identifier: "UsageLimits.Budget" })
 
-/** The usage limits of the OpenCode Console workspace a location is signed in to. */
+/** One quota of the GitHub Copilot plan, as `copilot_internal/user` reports it in `quota_snapshots`. */
+export interface CopilotQuota extends Schema.Schema.Type<typeof CopilotQuota> {}
+export const CopilotQuota = Schema.Struct({
+  /** GitHub's quota ID, such as `premium_interactions`, `chat` or `completions`. */
+  id: Schema.String,
+  /** The plan's allowance for the period: AI credits when `tokenBased`, otherwise premium requests. */
+  entitlement: Schema.Finite,
+  remaining: Schema.Finite,
+  percentRemaining: Percent,
+  unlimited: Schema.Boolean,
+  /** Usage past the entitlement is billed instead of refused. */
+  overagePermitted: Schema.Boolean,
+  overageCount: Schema.Finite,
+}).annotate({ identifier: "UsageLimits.CopilotQuota" })
+
+/** The GitHub Copilot subscription of the connected GitHub account. */
+export interface Copilot extends Schema.Schema.Type<typeof Copilot> {}
+export const Copilot = Schema.Struct({
+  /** The plan GitHub reports, such as `individual`, `business` or `enterprise`. */
+  plan: Schema.String,
+  /** Quotas count AI credits (token-based billing) rather than premium requests. */
+  tokenBased: Schema.Boolean,
+  resetsAt: Instant.pipe(optional),
+  quotas: Schema.Array(CopilotQuota),
+}).annotate({ identifier: "UsageLimits.Copilot" })
+
+/** The usage limits of the OpenCode Console workspace and the GitHub Copilot subscription a location is signed in to. */
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   workspace: Schema.Struct({
@@ -70,7 +96,8 @@ export const Info = Schema.Struct({
     name: Schema.String.pipe(optional),
     /** The member's usage page in OpenCode Console. */
     usageURL: Schema.String,
-  }),
+  }).pipe(optional),
   go: Go.pipe(optional),
   budgets: Schema.Array(Budget),
+  copilot: Copilot.pipe(optional),
 }).annotate({ identifier: "UsageLimits.Info" })

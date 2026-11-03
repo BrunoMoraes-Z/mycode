@@ -89,7 +89,7 @@ export function usageView(
   const resetsAt = Math.min(...info.budgets.map((budget) => budget.resetsAt))
   const go = info.go
   return {
-    workspace: info.workspace.name,
+    workspace: info.workspace?.name,
     callout,
     go: go && (["rolling", "weekly", "monthly"] as const).map((window) => ({ window, ...go[window] })),
     budgets: budgets.map((entry, index) => ({

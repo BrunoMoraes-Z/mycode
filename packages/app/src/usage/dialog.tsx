@@ -220,7 +220,7 @@ export function UsageDialogContent(props: {
           <Button
             variant="ghost"
             class="text-v2-text-text-muted!"
-            onClick={() => platform.openExternal(props.info.workspace.usageURL)}
+            onClick={() => props.info.workspace && platform.openExternal(props.info.workspace.usageURL)}
           >
             {language.t("usage.footer.details")}
           </Button>

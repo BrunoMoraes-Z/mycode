@@ -252,6 +252,15 @@ export const Info = Schema.Struct({
     description: "Show the release highlights once after OpenCode updates",
   }),
   mouse: Schema.optional(Schema.Boolean).annotate({ description: "Enable terminal mouse capture" }),
+  copilot_usage: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description: "Show GitHub Copilot AI credit usage while a GitHub Copilot model is selected",
+      }),
+      sidebar: Schema.optional(Schema.Boolean).annotate({ description: "Show GitHub Copilot usage in the sidebar" }),
+      footer: Schema.optional(Schema.Boolean).annotate({ description: "Show GitHub Copilot usage in the prompt footer" }),
+    }),
+  ).annotate({ description: "GitHub Copilot usage display settings" }),
   cursor: Schema.optional(Cursor),
 })
 export type Info = Schema.Schema.Type<typeof Info>
