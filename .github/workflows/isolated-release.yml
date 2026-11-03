@@ -1,6 +1,6 @@
 name: isolated-release
 
-# Publishes a GitHub Release with the CLI binaries for every vX.Y.Z tag pushed from the isolated branch.
+# Publishes a GitHub Release with the Windows CLI binaries for every vX.Y.Z tag pushed from the isolated branch.
 # The isolated updater (packages/cli/src/services/updater.ts) reads these releases and downloads the asset
 # named opencode-<process.platform>-<process.arch>[.exe].
 on:
@@ -42,16 +42,12 @@ jobs:
         run: |
           export OPENCODE_VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
-          # build target -> updater asset (process.platform-process.arch)
-          for pair in windows-x64:win32-x64 windows-arm64:win32-arm64 linux-x64:linux-x64 linux-arm64:linux-arm64 darwin-x64:darwin-x64 darwin-arm64:darwin-arm64; do
+          # build target -> updater asset (process.platform-process.arch); this branch ships Windows only
+          for pair in windows-x64:win32-x64 windows-arm64:win32-arm64; do
             target="${pair%%:*}"
             asset="opencode-${pair##*:}"
             OPENCODE_TARGET="$target" bun run --cwd packages/cli build "--outdir=dist-$target"
-            if [[ "$target" == windows-* ]]; then
-              cp "packages/cli/dist-$target/cli-$target/bin/opencode.exe" "release/$asset.exe"
-            else
-              cp "packages/cli/dist-$target/cli-$target/bin/opencode" "release/$asset"
-            fi
+            cp "packages/cli/dist-$target/cli-$target/bin/opencode.exe" "release/$asset.exe"
           done
           (cd release && sha256sum * > SHA256SUMS)
 
