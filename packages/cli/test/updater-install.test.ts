@@ -15,6 +15,9 @@ const it = testEffect(NodeServices.layer)
 
 declare const OPENCODE_CLI_NAME: string | undefined
 
+const releaseAsset = `opencode-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`
+const releasesUrl = "https://api.github.com/repos/BrunoMoraes-Z/mycode/releases?per_page=100"
+
 function fixture(
   respond: (command: {
     readonly command: string
@@ -56,7 +59,16 @@ function fixture(
               const url = input instanceof Request ? input.url : input.toString()
               requests.push(url)
               if (new URL(url).hostname === "formulae.brew.sh") return Response.json({ versions: { stable: "2.0.21" } })
-              return Response.json({ version: "2.3.4", metadata: { package: releasePackage } })
+              const assets = [{ name: releaseAsset, url: "https://api.github.com/asset", browser_download_url: "" }]
+              if (url.includes("/releases/tags/")) return Response.json({ tag_name: "v2.3.4", draft: false, prerelease: false, assets })
+              if (url === "https://api.github.com/asset") return new Response("new-binary")
+              return Response.json([
+                { tag_name: "v2.3.4", draft: false, prerelease: false, assets },
+                { tag_name: "v2.10.0", draft: true, prerelease: false, assets },
+                { tag_name: "v2.3.3", draft: false, prerelease: false, assets },
+                { tag_name: "v3.0.0-beta.1", draft: false, prerelease: true, assets },
+                { tag_name: "nightly", draft: false, prerelease: false, assets },
+              ])
             },
             { preconnect: fetch.preconnect },
           ),
@@ -164,14 +176,6 @@ installs.forEach(({ method, command }) => {
   )
 })
 
-it.live("vp force-installs a renamed V2 package that replaces the existing binary owner", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture(() => ({}), "@opencode/cli", false, "@opencode/cli-node")
-    yield* test.updater.upgrade("vp", "v2.3.4-beta.1")
-    expect(test.commands).toEqual([["vp", "install", "-g", "--force", "@opencode/cli-node@2.3.4-beta.1"]])
-  }),
-)
-
 it.live("vp removes the package from its managed global store", () =>
   Effect.gen(function* () {
     const test = yield* fixture()
@@ -210,31 +214,28 @@ it.live("bun ignores install cache cleanup failures", () =>
     expect(test.commands).toHaveLength(1)
   }),
 )
-;["success", "download", "install"].forEach((failure) => {
-  it.live(`curl uses the V2 installer and cleans its directory: ${failure}`, () =>
+it.live("the latest version is the highest published vX.Y.Z GitHub release tag", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture()
+    // Drafts, prereleases and non-semver tags never count as updates.
+    expect(yield* test.updater.latest("github")).toBe("2.3.4")
+    expect(test.requests).toEqual([releasesUrl])
+  }),
+)
+;["github", "curl"].forEach((method) => {
+  it.live(`${method} replaces the executable with the GitHub release asset`, () =>
     Effect.gen(function* () {
-      const test = yield* fixture((command) => {
-        const installer = command.command === "curl" ? command.args[2] : command.args[0]
-        expect(existsSync(path.dirname(installer))).toBe(true)
-        return {
-          exitCode:
-            path.basename(command.command, ".exe") ===
-            (failure === "download" ? "curl" : failure === "install" ? "bash" : "")
-              ? 1
-              : 0,
-          stderr: Buffer.from(`${failure} failed`),
-        }
-      })
-      const result = yield* test.updater.upgrade("curl", "v2.3.4-beta.1").pipe(Effect.flip, Effect.option)
-      const installer = test.commands[0]?.[3]
-      expect(installer).toStartWith(path.join(test.global.cache, "update-"))
-      expect(test.commands).toEqual([
-        ["curl", "-fsSL", "-o", installer, "https://opencode.ai/v2/install"],
-        ...(failure === "download" ? [] : [[test.bash, installer, "--version", "2.3.4-beta.1", "--no-modify-path"]]),
+      const test = yield* fixture()
+      yield* test.updater.upgrade(method === "github" ? "github" : "curl", "v2.3.4")
+      expect(test.commands).toEqual([])
+      expect(test.requests).toEqual([
+        "https://api.github.com/repos/BrunoMoraes-Z/mycode/releases/tags/v2.3.4",
+        "https://api.github.com/asset",
       ])
-      expect(yield* test.fs.readDirectory(test.global.cache)).toEqual([])
-      expect(result._tag).toBe(failure === "success" ? "None" : "Some")
-      if (result._tag === "Some") expect(result.value.message).toBe(`${failure} failed`)
+      expect(yield* test.fs.readFileString(test.executable)).toBe("new-binary")
+      expect(existsSync(`${test.executable}.new`)).toBe(false)
+      // Windows cannot overwrite a running executable, so the current one moves aside.
+      expect(existsSync(`${test.executable}.old`)).toBe(process.platform === "win32")
     }),
   )
 })
@@ -327,7 +328,7 @@ it.live("Homebrew Core installs check and upgrade the Core formula", () =>
     expect(yield* test.updater.latest("npm")).toBe("2.3.4")
     expect(test.requests).toEqual([
       "https://formulae.brew.sh/api/formula/opencode.json",
-      "https://opencode.ai/update/api/local/cli/npm?current=local",
+      releasesUrl,
     ])
   }),
 )
@@ -339,10 +340,7 @@ it.live("Homebrew Core installs check and upgrade the Core formula", () =>
       expect(yield* test.updater.latest()).toBe("2.3.4")
       yield* test.updater.upgrade("brew", "2.3.4")
       expect(test.commands).toEqual([["brew", "upgrade", `anomalyco/tap/${formula}`]])
-      expect(test.requests).toEqual([
-        "https://opencode.ai/update/api/local/cli/homebrew?current=local",
-        "https://opencode.ai/update/api/local/cli/homebrew?current=local",
-      ])
+      expect(test.requests).toEqual([releasesUrl, releasesUrl])
     }),
   )
 })
@@ -472,36 +470,6 @@ windows("windows keeps the uninstall link in the temporary directory, not the re
     expect(test.commands).toEqual([["bun", "remove", "--global", "@opencode/cli"]])
     expect(links(test.global.cache)).toEqual([])
     expect(links(test.global.tmp)).toEqual([])
-  }),
-)
-
-windows("windows links the curl binary before the installer replaces it", () =>
-  Effect.gen(function* () {
-    const layout = { executable: "", cache: "" }
-    const test = yield* fixture(
-      (command) => {
-        if (path.basename(command.command, ".exe") === "bash") {
-          expect(readFileSync(layout.executable, "utf8")).toBe("binary")
-          expect(upgradeLinks(layout.cache)).toHaveLength(1)
-        }
-        return {}
-      },
-      "@opencode/cli",
-      false,
-      "@opencode/cli",
-      undefined,
-      (_root, home) => Effect.succeed(path.join(home, ".opencode", "bin", "opencode.exe")),
-    )
-    layout.executable = test.executable
-    layout.cache = test.global.cache
-    const original = process.execPath
-    process.execPath = layout.executable
-    yield* Effect.addFinalizer(() => Effect.sync(() => (process.execPath = original)))
-    expect(yield* test.updater.method()).toBe("curl")
-    yield* test.updater.upgrade("curl", "2.3.4")
-    expect(test.commands.map((command) => command[0])).toEqual(["curl", test.bash])
-    expect(yield* test.fs.readFileString(layout.executable)).toBe("binary")
-    expect(links(test.global.cache)).toEqual([])
   }),
 )
 

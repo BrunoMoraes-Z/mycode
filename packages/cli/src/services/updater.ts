@@ -11,7 +11,43 @@ import { RetainedImage } from "./retained-image"
 import { action, parseReleaseVersion, type Policy } from "./updater-action"
 import { errorMessage } from "../util/error"
 
-export const methods = ["curl", "npm", "pnpm", "bun", "yarn", "vp", "brew", "winget"] as const
+export const methods = ["github", "curl", "npm", "pnpm", "bun", "yarn", "vp", "brew", "winget"] as const
+
+// Isolated build: releases come from this repository's GitHub Releases, one per semver tag (vX.Y.Z).
+const releaseRepository = "BrunoMoraes-Z/mycode"
+const releaseAsset = `opencode-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`
+
+const GitHubRelease = Schema.Struct({
+  tag_name: Schema.String,
+  draft: Schema.Boolean,
+  prerelease: Schema.Boolean,
+  assets: Schema.Array(Schema.Struct({ name: Schema.String, url: Schema.String, browser_download_url: Schema.String })),
+})
+const decodeGitHubReleases = Schema.decodeUnknownOption(Schema.Array(GitHubRelease))
+const decodeBrewFormula = Schema.decodeUnknownOption(Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) }))
+
+function githubHeaders(accept = "application/vnd.github+json") {
+  const token = process.env.OPENCODE_UPDATE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN
+  return {
+    Accept: accept,
+    "User-Agent": "opencode-isolated-updater",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
+
+function compareVersions(a: string, b: string) {
+  const left = parseReleaseVersion(a)
+  const right = parseReleaseVersion(b)
+  if (!left || !right) return 0
+  const core = left.core
+    .split(".")
+    .map((part, index) => Number(part) - Number(right.core.split(".")[index]))
+    .find((difference) => difference !== 0)
+  if (core) return core
+  if (left.prerelease.length === 0 || right.prerelease.length === 0)
+    return right.prerelease.length - left.prerelease.length
+  return left.prerelease.join(".").localeCompare(right.prerelease.join("."), undefined, { numeric: true })
+}
 
 export type Method = (typeof methods)[number]
 export type RunResult = { readonly type: "available" | "installed"; readonly version: string }
@@ -46,6 +82,7 @@ const decodeVpPackages = Schema.decodeUnknownOption(
 )
 
 const installNames: Record<Method, string> = {
+  github: "GitHub Releases",
   curl: "The OpenCode installer",
   npm: "npm",
   pnpm: "pnpm",
@@ -142,7 +179,6 @@ const make = Effect.gen(function* () {
   const appProcess = yield* AppProcess.Service
   const flock = yield* EffectFlock.Service
   const installedVersion = yield* Ref.make(OPENCODE_VERSION)
-  const channel = OPENCODE_CHANNEL.replace(/[^a-zA-Z0-9._-]/g, "-")
   const executable = yield* fs.realPath(process.execPath).pipe(Effect.orElseSucceed(() => process.execPath))
   const installedPackage = yield* Effect.gen(function* () {
     const directory = path.dirname(path.dirname(executable))
@@ -195,26 +231,60 @@ const make = Effect.gen(function* () {
   )
   const curlBinary = yield* fs.realPath(curlPath).pipe(Effect.orElseSucceed(() => curlPath))
 
-  // On Windows a bare `bash` may be the WSL launcher, which cannot run the installer against Windows paths.
-  const installerBash = Effect.fnUntraced(function* () {
-    if (process.platform !== "win32") return "bash"
-    if (process.env.OPENCODE_GIT_BASH_PATH) return process.env.OPENCODE_GIT_BASH_PATH
-    const git = yield* exec(["git", "--exec-path"]).pipe(Effect.orElseSucceed(() => undefined))
-    const bash = git?.code === 0 ? path.resolve(git.stdout.trim(), "..", "..", "..", "bin", "bash.exe") : undefined
-    if (bash && (yield* fs.exists(bash).pipe(Effect.orElseSucceed(() => false)))) return bash
-    return yield* Effect.fail(
-      new UpgradeError({
-        title: "Git Bash is required to update OpenCode",
-        detail: "The OpenCode installer runs with Git Bash on Windows, and it was not found.",
-        retry: "Install Git for Windows or set OPENCODE_GIT_BASH_PATH, then run opencode upgrade again.",
-      }),
+  // Replaces the running executable with the release asset. Windows cannot overwrite a running .exe but can rename
+  // it, so the current binary moves aside to `.old` (removed on the next update) before the new one takes its place.
+  const githubUpgrade = Effect.fnUntraced(function* (version: string) {
+    const failure = (detail: string, cause?: unknown) =>
+      new UpgradeError(
+        {
+          title: "Could not install the OpenCode update from GitHub",
+          detail,
+          retry: "Check your network, then run opencode upgrade again.",
+        },
+        cause === undefined ? undefined : { cause },
+      )
+    const download = (url: string, accept?: string) =>
+      Effect.tryPromise({
+        try: (signal) =>
+          fetch(url, { headers: githubHeaders(accept), signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)]) }),
+        catch: (cause) => failure(errorDetail(cause), cause),
+      }).pipe(
+        Effect.filterOrFail(
+          (response) => response.ok,
+          (response) => failure(`GitHub returned HTTP ${response.status} for ${url}.`),
+        ),
+      )
+    const tag = yield* download(`https://api.github.com/repos/${releaseRepository}/releases/tags/v${version}`).pipe(
+      Effect.flatMap((response) =>
+        Effect.tryPromise({ try: () => response.json(), catch: (cause) => failure(errorDetail(cause), cause) }),
+      ),
     )
+    const asset = Option.getOrUndefined(decodeGitHubReleases([tag]))?.[0]?.assets.find(
+      (item) => item.name === releaseAsset,
+    )
+    if (!asset) return yield* Effect.fail(failure(`Release v${version} has no ${releaseAsset} asset.`))
+    // The API URL also serves assets of private repositories when a token is set.
+    const bytes = yield* download(asset.url, "application/octet-stream").pipe(
+      Effect.flatMap((response) =>
+        Effect.tryPromise({ try: () => response.arrayBuffer(), catch: (cause) => failure(errorDetail(cause), cause) }),
+      ),
+    )
+    const next = `${executable}.new`
+    const previous = `${executable}.old`
+    yield* fs.writeFile(next, new Uint8Array(bytes))
+    if (process.platform !== "win32") yield* fs.chmod(next, 0o755)
+    yield* fs.remove(previous, { force: true })
+    if (process.platform === "win32") yield* fs.rename(executable, previous)
+    yield* fs.rename(next, executable)
   })
 
   const method = Effect.fnUntraced(function* () {
     if (executable === curlBinary) return "curl"
     if (installedFormula) return "brew"
     if (installedWinget) return "winget"
+    // Release binaries from GitHub are standalone executables named opencode; source checkouts run inside bun or node.
+    if (!installedPackage && !OPENCODE_LOCAL && path.basename(executable).toLowerCase().startsWith("opencode"))
+      return "github"
     if (!installedPackage) return
 
     const parts = executable.toLowerCase().split(path.sep).map((part) => part.replace(/^\./, ""))
@@ -246,7 +316,7 @@ const make = Effect.gen(function* () {
 
   const removalCommand = (method: Method) => {
     if (method === "winget") return ["winget", "uninstall", ...wingetArgs]
-    if (method === "curl" || method === "brew" || !installedPackage) return undefined
+    if (method === "github" || method === "curl" || method === "brew" || !installedPackage) return undefined
     const commands = {
       npm: ["npm", "uninstall", "--global", installedPackage],
       pnpm: ["pnpm", "remove", "--global", installedPackage],
@@ -273,61 +343,51 @@ const make = Effect.gen(function* () {
   }
 
   const release = Effect.fnUntraced(function* (method?: Method) {
-    const distribution = method === "brew" ? "homebrew" : "npm"
     // Homebrew Core builds its formula on its own schedule, so the tap release does not describe it.
     const core = method === "brew" && installedFormula === "opencode"
+    const failure = (detail: string, cause?: unknown) =>
+      new UpgradeError(
+        {
+          title: "Could not check for OpenCode updates",
+          detail,
+          retry: "Check your network, then run opencode upgrade again.",
+        },
+        cause === undefined ? undefined : { cause },
+      )
     const response = yield* Effect.tryPromise({
       try: (signal) =>
         fetch(
           core
             ? "https://formulae.brew.sh/api/formula/opencode.json"
-            : `https://opencode.ai/update/api/${encodeURIComponent(channel)}/${encodeURIComponent(OPENCODE_ARTIFACT)}/${distribution}?current=${encodeURIComponent(OPENCODE_VERSION)}`,
+            : `https://api.github.com/repos/${releaseRepository}/releases?per_page=100`,
           {
+            headers: core ? undefined : githubHeaders(),
             signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
           },
         ),
-      catch: (cause) =>
-        new UpgradeError(
-          {
-            title: "Could not check for OpenCode updates",
-            detail: errorDetail(cause),
-            retry: "Check your network, then run opencode upgrade again.",
-          },
-          { cause },
-        ),
+      catch: (cause) => failure(errorDetail(cause), cause),
     })
-    if (!response.ok)
-      return yield* Effect.fail(
-        new UpgradeError({
-          title: "Could not check for OpenCode updates",
-          detail: `The update service returned HTTP ${response.status}.`,
-          retry: "Try again in a few minutes.",
-        }),
-      )
-    const data: { version?: string; metadata?: { package?: string }; versions?: { stable?: string } } =
-      yield* Effect.tryPromise({
-        try: () => response.json(),
-        catch: (cause) =>
-          new UpgradeError(
-            {
-              title: "Could not read the OpenCode update information",
-              detail: errorDetail(cause),
-              retry: "Try again in a few minutes.",
-            },
-            { cause },
-          ),
-      })
-    const version = core ? data.versions?.stable : data.version
-    const packageName = core ? "opencode" : data.metadata?.package
-    if (!version || !packageName)
-      return yield* Effect.fail(
-        new UpgradeError({
-          title: "Could not read the OpenCode update information",
-          detail: "The update service returned incomplete release information.",
-          retry: "Try again in a few minutes.",
-        }),
-      )
-    return { package: packageName, version }
+    if (!response.ok) return yield* Effect.fail(failure(`The update service returned HTTP ${response.status}.`))
+    const data: unknown = yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: (cause) => failure(errorDetail(cause), cause),
+    })
+    if (core) {
+      const version = Option.getOrUndefined(decodeBrewFormula(data))?.versions.stable
+      if (!version) return yield* Effect.fail(failure("Homebrew returned no stable version."))
+      return { package: "opencode", version, asset: undefined }
+    }
+    const latest = Option.getOrElse(decodeGitHubReleases(data), () => [])
+      .filter((item) => !item.draft && !item.prerelease && parseReleaseVersion(item.tag_name))
+      .toSorted((a, b) => compareVersions(b.tag_name, a.tag_name))[0]
+    if (!latest)
+      return yield* Effect.fail(failure(`No published release with a vX.Y.Z tag was found in ${releaseRepository}.`))
+    return {
+      package:
+        method === "brew" && installedFormula ? `anomalyco/tap/${installedFormula}` : (installedPackage ?? "@opencode/cli"),
+      version: latest.tag_name.replace(/^v/, ""),
+      asset: latest.assets.find((asset) => asset.name === releaseAsset),
+    }
   })
 
   // WinGet moderates every submission, so only its own index knows which release it can install.
@@ -425,6 +485,26 @@ const make = Effect.gen(function* () {
   const upgrade = Effect.fnUntraced(function* (method: Method, input: string) {
     if (!parseReleaseVersion(input)) return yield* Effect.fail(new Error(`Invalid version: ${input}`))
     const version = input.trim().replace(/^v/, "")
+    // The OpenCode installer is not used in this build: curl installs update from GitHub Releases too.
+    if (method === "github" || method === "curl")
+      return yield* Effect.scoped(
+        flock
+          .acquire("cli-upgrade", undefined, { timeoutMs: Duration.toMillis("15 minutes") })
+          .pipe(Effect.andThen(githubUpgrade(version))),
+      ).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof UpgradeError
+            ? cause
+            : new UpgradeError(
+                {
+                  title: "Could not install the OpenCode update from GitHub",
+                  detail: errorDetail(cause),
+                  retry: "Fix the issue above, then run opencode upgrade again.",
+                },
+                { cause },
+              ),
+        ),
+      )
     const packageName =
       method === "winget"
         ? wingetPackage
@@ -435,7 +515,7 @@ const make = Effect.gen(function* () {
     if (installedPackage && packageName !== installedPackage && (method === "pnpm" || method === "yarn")) {
       return yield* Effect.fail(new Error(`Reinstall ${target} with ${method} to migrate from ${installedPackage}.`))
     }
-    const commands: Record<Exclude<Method, "bun" | "curl" | "brew" | "winget">, string[]> = {
+    const commands: Record<Exclude<Method, "github" | "bun" | "curl" | "brew" | "winget">, string[]> = {
       // Keep the old package: uninstalling it can unlink the replacement command.
       npm: [
         "npm",
@@ -470,28 +550,6 @@ const make = Effect.gen(function* () {
               method,
               command: ["bun", "install", "--global", "--trust", "--cache-dir", cache, target],
               displayCommand: ["bun", "install", "--global", "--trust", target],
-            }),
-          )
-        }
-        if (method === "curl") {
-          const bash = yield* installerBash()
-          yield* fs.makeDirectory(global.cache, { recursive: true })
-          const directory = yield* temporaryDirectory("update-")
-          const installer = path.join(directory, "install")
-          yield* runUpgrade({
-            method,
-            command: ["curl", "-fsSL", "-o", installer, "https://opencode.ai/v2/install"],
-            displayCommand: ["curl", "-fsSL", "https://opencode.ai/v2/install"],
-            title: "Could not download the OpenCode installer",
-            retry: "Check your network, then run opencode upgrade again.",
-          })
-          return yield* retaining(
-            method,
-            runUpgrade({
-              method,
-              command: [bash, installer, "--version", version, "--no-modify-path"],
-              displayCommand: ["opencode", "upgrade", version, "--method", "curl"],
-              title: "The OpenCode installer failed",
             }),
           )
         }
@@ -532,8 +590,6 @@ const make = Effect.gen(function* () {
   })
 
   const inspect = Effect.fnUntraced(function* () {
-    // Isolated build: never contact OpenCode update servers.
-    if (true as boolean) return undefined
     if (OPENCODE_LOCAL || ["1", "true"].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase() ?? "")) {
       yield* Effect.logInfo("update check skipped", {
         reason: OPENCODE_LOCAL ? "local-install" : "disabled",
