@@ -55,7 +55,8 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js"), { once: true })
 }
 
-if (import.meta.env.VITE_SENTRY_DSN) {
+// Isolated build: telemetry is opt-in via VITE_TELEMETRY=1.
+if (import.meta.env.VITE_SENTRY_DSN && import.meta.env.VITE_TELEMETRY === "1") {
   init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,

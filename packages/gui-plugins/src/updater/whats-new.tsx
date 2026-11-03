@@ -59,6 +59,9 @@ export function showWhatsNew(
 ) {
   const timers = new Set<ReturnType<typeof setTimeout>>()
 
+  // Isolated build: never fetch the changelog from OpenCode servers.
+  if (CHANGELOG_URL) return input.markSeen()
+
   ctx.signal.addEventListener("abort", () => timers.forEach(clearTimeout))
 
   fetch(CHANGELOG_URL, { signal: ctx.signal, headers: { Accept: "application/json" } })

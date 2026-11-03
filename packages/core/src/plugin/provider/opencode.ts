@@ -174,7 +174,6 @@ export const OpencodePlugin = define<
 >({
   id: "opencode.provider.opencode",
   effect: Effect.fn(function* (ctx) {
-    const disableFree = ["1", "true"].includes(process.env.OPENCODE_DISABLE_FREE_MODELS?.toLowerCase() ?? "")
     const client = yield* HttpClient.HttpClient
     // Every request here goes to the Console, which reads the User-Agent to tell which OpenCode a member runs
     // and whether it evaluates the policies it is being sent.
@@ -387,15 +386,8 @@ export const OpencodePlugin = define<
       if (integrated) ConfigProviderPlugin.integrate(providers, integrated)
     })
     yield* ctx.provider.transform((providers) => {
-      const item = providers.get(Provider.ID.opencode)
-      if (!item) return
-      const hasKey = Boolean(process.env.OPENCODE_API_KEY || snapshot.connection || item.provider.settings?.apiKey)
-      providers.update(item.provider.id, (provider) => {
-        if (!hasKey && !disableFree) {
-          provider.activation = "enabled"
-          provider.settings = { ...provider.settings, apiKey: "public" }
-        }
-      })
+      // Isolated build: hide the OpenCode (Zen/Go) provider and its models entirely.
+      if (providers.get(Provider.ID.opencode)) providers.remove(Provider.ID.opencode)
     })
     yield* ctx.model.transform((models) => {
       const item = models.provider.get(Provider.ID.opencode)

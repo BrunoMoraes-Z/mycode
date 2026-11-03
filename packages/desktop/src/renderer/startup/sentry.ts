@@ -5,7 +5,7 @@ export function desktopVersion() {
 }
 
 export async function initializeSentry(version: string) {
-  if (!import.meta.env.VITE_SENTRY_DSN) return
+  if (!import.meta.env.VITE_SENTRY_DSN || import.meta.env.VITE_TELEMETRY !== "1") return
   const { init } = await import("@sentry/solid")
   init({
     dsn: import.meta.env.VITE_SENTRY_DSN,

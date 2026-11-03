@@ -38,6 +38,8 @@ export const make = Effect.fn("Updater.platform")(function* (channel: string) {
   return {
     checkForUpdate: Effect.tryPromise({
       try: async () => {
+        // Isolated build: never contact OpenCode update servers.
+        if (process.env.OPENCODE_ISOLATED !== "0") return undefined
         const result = await updateClient.checkForUpdates()
 
         if (!result?.isUpdateAvailable) return undefined
