@@ -43,44 +43,31 @@
 
 ---
 
-### Installation
+### Installation (isolated build)
 
-```bash
-# YOLO
-curl -fsSL https://opencode.ai/v2/install | bash
+This fork (`isolated` branch) ships a Windows-only CLI with no telemetry and no calls to OpenCode servers: no update checks against opencode.ai, no OpenCode Zen/Go provider and no OpenCode Console sign-in.
 
-# Package managers
-npm i -g @opencode/cli@latest      # or bun/pnpm/yarn
-brew install anomalyco/tap/opencode-v2 # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-beta              # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run github:anomalyco/opencode  # Nix
+Install it from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/BrunoMoraes-Z/mycode/isolated/install-isolated.ps1 | iex
 ```
+
+The script downloads the latest [release](https://github.com/BrunoMoraes-Z/mycode/releases) for your machine (x64 or ARM64), installs it to `%LOCALAPPDATA%\Programs\opencode\opencode.exe` and adds that folder to your user `PATH`. Open a new terminal and run `opencode`.
 
 > [!TIP]
-> Remove versions older than 0.1.x before installing.
+> If another OpenCode is installed (for example with `npm i -g opencode-ai`), uninstall it first so it does not shadow this one in `PATH`. Check with `opencode --version`.
 
-### Desktop App (BETA)
+#### Updates
 
-OpenCode is also available as a desktop application. Download it from [opencode.ai/download](https://opencode.ai/download).
+Releases are published from `vX.Y.Z` tags on the `isolated` branch. OpenCode checks this repository's GitHub Releases and notifies you when a newer version exists; run `opencode upgrade` to install it, or set `"update": "auto"` in your config to update automatically (`"disable"` turns the check off).
 
-| Platform              | Download                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-win-x64.exe`     |
-| Linux                 | `.deb`, `.rpm`, or `.AppImage`     |
+To publish a new version:
 
 ```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
+git tag v2.2.7
+git push origin v2.2.7
 ```
-
-#### Installation Directory
-
-The install script installs OpenCode to `$HOME/.opencode/bin`.
 
 ### Agents
 
