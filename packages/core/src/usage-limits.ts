@@ -6,7 +6,7 @@ import { Provider } from "@opencode/schema/provider"
 import { UsageLimits } from "@opencode/schema/usage-limits"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
-import { Context, Duration, Effect, Layer, Schema } from "effect"
+import { Context, Duration, Effect, Layer, Result, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ConsoleAccess } from "./console-access.js"
 import type { Credential } from "./credential.js"
@@ -33,9 +33,64 @@ export const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
 
     const get = Effect.fn("UsageLimits.get")(function* () {
-      const [consoleLimits, copilot] = yield* Effect.all([readConsole(), readCopilot()], { concurrency: 2 })
-      if (!consoleLimits && !copilot) return undefined
-      return { ...consoleLimits, budgets: consoleLimits?.budgets ?? [], ...(copilot ? { copilot } : {}) }
+      // Each source answers on its own, so one that fails doesn't hide the others; only when every source the
+      // location is signed in to fails is the read unavailable.
+      const results = yield* Effect.all(
+        [Effect.result(readConsole()), Effect.result(readCopilot()), Effect.result(readChatGPT())],
+        { concurrency: "unbounded" },
+      )
+      const consoleLimits = Result.getOrUndefined(results[0])
+      const copilot = Result.getOrUndefined(results[1])
+      const chatgpt = Result.getOrUndefined(results[2])
+      const errorOf = <A,>(result: Result.Result<A, UnavailableError>) =>
+        Result.isFailure(result) ? result.failure : undefined
+      const failure = errorOf(results[0]) ?? errorOf(results[1]) ?? errorOf(results[2])
+      if (!consoleLimits && !copilot && !chatgpt) {
+        if (failure) return yield* Effect.fail(failure)
+        return undefined
+      }
+      if (failure) yield* Effect.logWarning("some usage limits are unavailable", { cause: failure })
+      return {
+        ...consoleLimits,
+        budgets: consoleLimits?.budgets ?? [],
+        ...(copilot ? { copilot } : {}),
+        ...(chatgpt ? { chatgpt } : {}),
+      }
+    })
+
+    const readChatGPT = Effect.fnUntraced(function* () {
+      const connection = yield* integrations.connection.active(Integration.ID.make("openai"))
+      if (!connection) return undefined
+      const credential = yield* integrations.connection
+        .resolve(connection)
+        .pipe(Effect.mapError((error) => new UnavailableError({ message: error.message })))
+      // Only a ChatGPT sign-in has a subscription; an API key pays per token.
+      if (!credential || credential.type !== "oauth") return undefined
+      const account = credential.metadata?.accountID
+      return yield* HttpClient.withScope(http)
+        .execute(
+          HttpClientRequest.get("https://chatgpt.com/backend-api/wham/usage").pipe(
+            HttpClientRequest.acceptJson,
+            HttpClientRequest.bearerToken(credential.access),
+            HttpClientRequest.setHeaders({
+              "User-Agent": "opencode",
+              ...(typeof account === "string" ? { "ChatGPT-Account-Id": account } : {}),
+            }),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(CodexUsage)),
+          Effect.map(chatgptUsage),
+          Effect.scoped,
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(15),
+            orElse: () => Effect.fail(new Error("timed out")),
+          }),
+          Effect.mapError(
+            (error) => new UnavailableError({ message: `ChatGPT subscription usage is unavailable: ${error.message}` }),
+          ),
+        )
     })
 
     const readCopilot = Effect.fnUntraced(function* () {
@@ -246,6 +301,44 @@ const CopilotUser = Schema.Struct({
   quota_reset_date: Schema.optional(Schema.String),
   quota_snapshots: Schema.optional(Schema.Record(Schema.String, CopilotSnapshot)),
 })
+
+// The parts of `GET chatgpt.com/backend-api/wham/usage` that describe the subscription's Codex windows.
+const CodexWindow = Schema.Struct({
+  used_percent: Schema.Finite,
+  limit_window_seconds: Schema.Finite,
+  reset_at: Schema.Finite,
+})
+const CodexUsage = Schema.Struct({
+  plan_type: Schema.optional(Schema.NullOr(Schema.String)),
+  rate_limit: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        limit_reached: Schema.optional(Schema.Boolean),
+        primary_window: Schema.optional(Schema.NullOr(CodexWindow)),
+        secondary_window: Schema.optional(Schema.NullOr(CodexWindow)),
+      }),
+    ),
+  ),
+})
+
+function chatgptUsage(usage: typeof CodexUsage.Type): UsageLimits.ChatGPT {
+  const window = (value: typeof CodexWindow.Type | null | undefined) =>
+    value
+      ? {
+          percent: Math.min(100, Math.max(0, value.used_percent)),
+          seconds: value.limit_window_seconds,
+          resetsAt: value.reset_at * 1000,
+        }
+      : undefined
+  const primary = window(usage.rate_limit?.primary_window)
+  const secondary = window(usage.rate_limit?.secondary_window)
+  return {
+    plan: usage.plan_type ?? "unknown",
+    limited: usage.rate_limit?.limit_reached ?? false,
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+  }
+}
 
 function copilotUsage(user: typeof CopilotUser.Type): UsageLimits.Copilot {
   const reset = Date.parse(user.quota_reset_date_utc ?? user.quota_reset_date ?? "")

@@ -376,6 +376,8 @@ export type UsageLimitsCopilotQuota = {
   overageCount: number
 }
 
+export type UsageLimitsChatGPTWindow = { percent: number; seconds: number; resetsAt: number }
+
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigCompactionPercent = string
@@ -957,6 +959,13 @@ export type UsageLimitsCopilot = {
   tokenBased: boolean
   resetsAt?: number
   quotas: Array<UsageLimitsCopilotQuota>
+}
+
+export type UsageLimitsChatGPT = {
+  plan: string
+  limited: boolean
+  primary?: UsageLimitsChatGPTWindow
+  secondary?: UsageLimitsChatGPTWindow
 }
 
 export type ConfigModelCapabilities = {
@@ -2548,6 +2557,7 @@ export type UsageLimitsInfo = {
   go?: UsageLimitsGo
   budgets: Array<UsageLimitsBudget>
   copilot?: UsageLimitsCopilot
+  chatgpt?: UsageLimitsChatGPT
 }
 
 export type GenerateImageResponse = { data: GenerateImageResult }

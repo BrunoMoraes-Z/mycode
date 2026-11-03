@@ -1,11 +1,8 @@
 import { Plugin } from "@opencode/plugin/tui"
 import type { UsageLimitsCopilot, UsageLimitsCopilotQuota } from "@opencode/client"
-import { createEffect, createMemo, onCleanup, Show } from "solid-js"
-import { useUsageLimits } from "../../component/usage"
-import { useConfig } from "../../config"
-import { useData } from "../../context/data"
-import { useLocal } from "../../context/local"
+import { createMemo, Show } from "solid-js"
 import { formatReset } from "../../util/usage-limits"
+import { throttle, useSubscriptionLimits, type Display, type Level } from "./shared"
 
 const count = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 })
 
@@ -17,72 +14,42 @@ function premium(copilot: UsageLimitsCopilot) {
   )
 }
 
-function level(quota: UsageLimitsCopilotQuota) {
+function level(quota: UsageLimitsCopilotQuota): Level {
   if (quota.percentRemaining <= 10) return "danger"
   if (quota.percentRemaining <= 25) return "warning"
   return "ok"
 }
 
-/**
- * The Copilot usage of the selected model's subscription, while a GitHub Copilot model is selected and the display is
- * on. Loads once, and reloads after every response a Copilot model gives, since each one spends credits.
- */
-function useCopilotUsage(where: "sidebar" | "footer", refresh: () => boolean) {
-  const config = useConfig()
-  const local = useLocal()
-  const data = useData()
-  const limits = useUsageLimits()
-  const selected = () => local.model.current()?.providerID === "github-copilot"
-  const enabled = () => {
-    const settings = config.data.copilot_usage
-    return (settings?.enabled ?? true) && (settings?.[where] ?? true)
-  }
-  createEffect(() => {
-    if (enabled() && selected() && limits.info() === undefined) limits.load()
-  })
-  onCleanup(
-    data.on("session.execution.succeeded", () => {
-      // Both displays listen; `refresh` lets only one reload per response.
-      if (enabled() && selected() && refresh()) limits.load(true)
-    }),
-  )
-  return createMemo(() => {
-    if (!enabled() || !selected()) return
-    const copilot = limits.info()?.copilot
-    const quota = copilot && premium(copilot)
-    if (!copilot || !quota) return
-    return {
-      copilot,
-      quota,
-      used: Math.max(0, quota.entitlement - quota.remaining),
-      unit: copilot.tokenBased ? "AI credits" : "premium requests",
-      level: level(quota),
-    }
-  })
-}
-
 export default Plugin.define({
   id: "opencode.copilot.usage",
   setup(context) {
-    // Responses end on both displays at once; reload at most once a second.
-    let last = 0
-    const refresh = () => {
-      const now = Date.now()
-      if (now - last < 1000) return false
-      last = now
-      return true
-    }
-    const color = (value: string) =>
+    const refresh = throttle()
+    const color = (value: Level) =>
       value === "danger"
         ? context.theme.text.feedback.error.base
         : value === "warning"
           ? context.theme.text.feedback.warning.base
           : context.theme.text.muted
+    const useCopilotUsage = (display: Display) => {
+      const info = useSubscriptionLimits({ setting: "copilot_usage", providerID: "github-copilot", display, refresh })
+      return createMemo(() => {
+        const copilot = info()?.copilot
+        const quota = copilot && premium(copilot)
+        if (!copilot || !quota) return
+        return {
+          copilot,
+          quota,
+          used: Math.max(0, quota.entitlement - quota.remaining),
+          unit: copilot.tokenBased ? "AI credits" : "premium requests",
+          level: level(quota),
+        }
+      })
+    }
 
     context.ui.slot({
       append: "sidebar.content",
       render: () => {
-        const usage = useCopilotUsage("sidebar", refresh)
+        const usage = useCopilotUsage("sidebar")
         return (
           <Show when={usage()}>
             {(value) => (
@@ -112,7 +79,7 @@ export default Plugin.define({
     context.ui.slot({
       append: "prompt.footer",
       render: (props) => {
-        const usage = useCopilotUsage("footer", refresh)
+        const usage = useCopilotUsage("footer")
         return (
           <Show when={props.mode === "normal" && usage()}>
             {(value) => (

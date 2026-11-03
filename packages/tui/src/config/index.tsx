@@ -261,6 +261,15 @@ export const Info = Schema.Struct({
       footer: Schema.optional(Schema.Boolean).annotate({ description: "Show GitHub Copilot usage in the prompt footer" }),
     }),
   ).annotate({ description: "GitHub Copilot usage display settings" }),
+  chatgpt_usage: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description: "Show ChatGPT subscription usage (5-hour and weekly windows) while an OpenAI model is selected",
+      }),
+      sidebar: Schema.optional(Schema.Boolean).annotate({ description: "Show ChatGPT usage in the sidebar" }),
+      footer: Schema.optional(Schema.Boolean).annotate({ description: "Show ChatGPT usage in the prompt footer" }),
+    }),
+  ).annotate({ description: "ChatGPT subscription usage display settings" }),
   cursor: Schema.optional(Cursor),
 })
 export type Info = Schema.Schema.Type<typeof Info>

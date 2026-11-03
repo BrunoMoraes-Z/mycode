@@ -88,7 +88,30 @@ export const Copilot = Schema.Struct({
   quotas: Schema.Array(CopilotQuota),
 }).annotate({ identifier: "UsageLimits.Copilot" })
 
-/** The usage limits of the OpenCode Console workspace and the GitHub Copilot subscription a location is signed in to. */
+/** One rate-limit window of a ChatGPT subscription, as Codex reports it. */
+export interface ChatGPTWindow extends Schema.Schema.Type<typeof ChatGPTWindow> {}
+export const ChatGPTWindow = Schema.Struct({
+  /** How much of the window's allowance is used. */
+  percent: Percent,
+  /** The window's length: 5 hours (18000) for the short window, a week (604800) for the long one. */
+  seconds: Schema.Finite,
+  resetsAt: Instant,
+}).annotate({ identifier: "UsageLimits.ChatGPTWindow" })
+
+/** The Codex usage of the ChatGPT subscription the OpenAI provider signs in with. */
+export interface ChatGPT extends Schema.Schema.Type<typeof ChatGPT> {}
+export const ChatGPT = Schema.Struct({
+  /** The plan ChatGPT reports, such as `plus`, `pro` or `team`. */
+  plan: Schema.String,
+  /** Codex refuses requests until a window resets. */
+  limited: Schema.Boolean,
+  /** The short (5-hour) window. */
+  primary: ChatGPTWindow.pipe(optional),
+  /** The long (weekly) window. */
+  secondary: ChatGPTWindow.pipe(optional),
+}).annotate({ identifier: "UsageLimits.ChatGPT" })
+
+/** The usage limits of the OpenCode Console workspace and the subscriptions a location is signed in to. */
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   workspace: Schema.Struct({
@@ -100,4 +123,5 @@ export const Info = Schema.Struct({
   go: Go.pipe(optional),
   budgets: Schema.Array(Budget),
   copilot: Copilot.pipe(optional),
+  chatgpt: ChatGPT.pipe(optional),
 }).annotate({ identifier: "UsageLimits.Info" })

@@ -50,16 +50,22 @@ const budget = {
 const meter = (status: string, percent: number) => ({ status, percent, resetsAt: "2026-10-24T17:00:00.000Z" })
 
 /**
- * Reads usage limits for a location whose active OpenCode Console connection resolves to `credential`, and whose
- * GitHub Copilot connection resolves to `copilot`.
+ * Reads usage limits for a location whose active OpenCode Console connection resolves to `credential`, whose
+ * GitHub Copilot connection resolves to `copilot`, and whose OpenAI connection resolves to `chatgpt`.
  */
 const read = (
   credential: Credential.Value | undefined,
   respond: (url: string) => Response,
   requests: HttpClientRequest.HttpClientRequest[] = [],
   copilot?: Credential.Value,
-) =>
-  Effect.flatMap(UsageLimits.Service, (limits) => limits.get()).pipe(
+  chatgpt?: Credential.Value,
+) => {
+  const credentials: Record<string, Credential.Value | undefined> = {
+    opencode: credential,
+    "github-copilot": copilot,
+    openai: chatgpt,
+  }
+  return Effect.flatMap(UsageLimits.Service, (limits) => limits.get()).pipe(
     Effect.provide(
       UsageLimits.layer.pipe(
         Layer.provide(
@@ -68,21 +74,17 @@ const read = (
               revision: () => 0,
               get: unused,
               connection: {
-                active: (integrationID) => {
-                  const value = integrationID === "github-copilot" ? copilot : credential
-                  return Effect.succeed(
-                    value && {
+                active: (integrationID) =>
+                  Effect.succeed(
+                    credentials[integrationID] && {
                       type: "credential" as const,
-                      id: Credential.ID.make(integrationID === "github-copilot" ? "copilot" : "console"),
+                      id: Credential.ID.make(integrationID),
                       label: "Anomaly",
                       method: "oauth" as const,
                     },
-                  )
-                },
-                resolve: (connection) =>
-                  Effect.succeed(
-                    connection.type === "credential" && connection.id === "copilot" ? copilot : credential,
                   ),
+                resolve: (connection) =>
+                  Effect.succeed(connection.type === "credential" ? credentials[connection.id] : undefined),
                 key: unused,
                 external: unused,
                 activate: unused,
@@ -107,6 +109,7 @@ const read = (
       ),
     ),
   )
+}
 
 it.effect("reads the member's Go allowance and budgets from the Console they signed in to", () =>
   Effect.gen(function* () {
@@ -310,5 +313,81 @@ it.effect("reports a GitHub Copilot quota lookup that fails as unavailable", () 
     expect(Exit.isFailure(exit) && Exit.findErrorOption(exit)).toMatchObject({
       value: { _tag: "UsageLimits.UnavailableError" },
     })
+  }),
+)
+
+const chatgpt = Credential.OAuth.make({
+  type: "oauth",
+  methodID: Integration.MethodID.make("browser"),
+  access: "chatgpt-access",
+  refresh: "chatgpt-refresh",
+  expires: Date.now() + 600_000,
+  metadata: { accountID: "acct_1" },
+})
+
+const codexWindow = (percent: number, seconds: number, resetAt: number) => ({
+  used_percent: percent,
+  limit_window_seconds: seconds,
+  reset_after_seconds: 100,
+  reset_at: resetAt,
+})
+
+it.effect("reads the ChatGPT subscription's 5-hour and weekly Codex windows", () =>
+  Effect.gen(function* () {
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      undefined,
+      () =>
+        Response.json({
+          plan_type: "plus",
+          rate_limit: {
+            allowed: true,
+            limit_reached: false,
+            primary_window: codexWindow(3, 18000, 1793731306),
+            secondary_window: codexWindow(17, 604800, 1794179388),
+          },
+        }),
+      requests,
+      undefined,
+      chatgpt,
+    )
+
+    expect(
+      requests.map((request) => [request.url, request.headers.authorization, request.headers["chatgpt-account-id"]]),
+    ).toEqual([["https://chatgpt.com/backend-api/wham/usage", "Bearer chatgpt-access", "acct_1"]])
+    expect(limits).toEqual({
+      budgets: [],
+      chatgpt: {
+        plan: "plus",
+        limited: false,
+        primary: { percent: 3, seconds: 18000, resetsAt: 1793731306000 },
+        secondary: { percent: 17, seconds: 604800, resetsAt: 1794179388000 },
+      },
+    })
+  }),
+)
+
+it.effect("has no ChatGPT subscription usage for an OpenAI API key", () =>
+  Effect.gen(function* () {
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const key = Credential.Key.make({ type: "key", key: "sk-test" })
+    expect(yield* read(undefined, () => Response.json({}), requests, undefined, key)).toBeUndefined()
+    expect(requests).toEqual([])
+  }),
+)
+
+it.effect("keeps the subscriptions that answer when another one fails", () =>
+  Effect.gen(function* () {
+    const limits = yield* read(
+      undefined,
+      (url) =>
+        url.includes("chatgpt.com")
+          ? new Response("unauthorized", { status: 401 })
+          : Response.json({ copilot_plan: "individual", quota_snapshots: {} }),
+      [],
+      copilot,
+      chatgpt,
+    )
+    expect(limits).toEqual({ budgets: [], copilot: { plan: "individual", tokenBased: false, quotas: [] } })
   }),
 )
