@@ -58,6 +58,17 @@ git merge --ff-only origin/dev
 
 If `--ff-only` fails, local `dev` has extra commits: report them (`git log origin/dev..dev --oneline`) and ask before doing anything.
 
+Upstream workflows must not run on the fork. `dev` stays identical to upstream, so they are disabled on GitHub instead of edited; disable any new one the sync brought in and cancel runs it started (only `isolated-release` stays active):
+
+```powershell
+$r = "BrunoMoraes-Z/mycode"
+gh workflow list --all -R $r -L 100 --json path,state | ConvertFrom-Json |
+  ? { $_.path -ne ".github/workflows/isolated-release.yml" -and $_.state -eq "active" } |
+  % { gh workflow disable $_.path -R $r }
+gh run list -R $r -b dev -L 50 --json databaseId,status | ConvertFrom-Json |
+  ? { $_.status -ne "completed" } | % { gh run cancel $_.databaseId -R $r }
+```
+
 ### 3. Preview what is coming
 
 ```sh

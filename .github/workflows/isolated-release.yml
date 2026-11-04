@@ -1,8 +1,8 @@
 name: isolated-release
 
-# Publishes a GitHub Release with the Windows CLI binaries for every vX.Y.Z tag pushed from the isolated branch.
-# The isolated updater (packages/cli/src/services/updater.ts) reads these releases and downloads the asset
-# named opencode-<process.platform>-<process.arch>[.exe].
+# Publishes a GitHub Release with the Windows CLI binaries and desktop installers for every vX.Y.Z tag pushed from
+# the isolated branch. The isolated updater (packages/cli/src/services/updater.ts) reads these releases and downloads
+# the asset named opencode-<process.platform>-<process.arch>[.exe].
 on:
   push:
     tags: ["v*.*.*"]
@@ -14,8 +14,11 @@ defaults:
   run:
     shell: bash
 
+env:
+  OPENCODE_CHANNEL: latest
+
 jobs:
-  release:
+  check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +33,12 @@ jobs:
             exit 1
           }
 
+  build-cli:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
@@ -37,8 +46,6 @@ jobs:
       - run: bun install
 
       - name: Build binaries
-        env:
-          OPENCODE_CHANNEL: latest
         run: |
           export OPENCODE_VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
@@ -49,9 +56,73 @@ jobs:
             OPENCODE_TARGET="$target" bun run --cwd packages/cli build "--outdir=dist-$target"
             cp "packages/cli/dist-$target/cli-$target/bin/opencode.exe" "release/$asset.exe"
           done
-          (cd release && sha256sum * > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cli
+          path: release/*
+          if-no-files-found: error
+
+  # Unsigned NSIS installers. pack.ts first packs the unpacked app, then wraps it in the installer.
+  build-desktop:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The desktop bundles the CLI package it names for the target (packages/desktop/script/utils.ts).
+          - { target: windows-x64, cli: windows-x64-baseline, install: "" }
+          - { target: windows-arm64, cli: windows-arm64, install: "--cpu=*" }
+    runs-on: windows-2025
+    env:
+      OPENCODE_TARGET: ${{ matrix.target }}
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install ${{ matrix.install }}
+
+      - name: Build CLI
+        run: OPENCODE_VERSION="${GITHUB_REF_NAME#v}" OPENCODE_TARGET="${{ matrix.cli }}" bun run --cwd packages/cli build
+
+      - name: Build desktop
+        working-directory: packages/desktop
+        run: OPENCODE_VERSION="${GITHUB_REF_NAME#v}" bun run build
+
+      - name: Pack desktop installer
+        working-directory: packages/desktop
+        timeout-minutes: 60
+        run: |
+          export OPENCODE_VERSION="${GITHUB_REF_NAME#v}"
+          bun run pack
+          # pack.ts clears dist/desktop, so move the unpacked app out before packing the installer around it.
+          mv ../../dist/desktop/app "$RUNNER_TEMP/app"
+          OPENCODE_DESKTOP_APP="$RUNNER_TEMP/app" bun run pack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.target }}
+          path: dist/desktop/*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [build-cli, build-desktop]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd release && sha256sum * > SHA256SUMS
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --generate-notes --target "$GITHUB_SHA"
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --generate-notes --target "$GITHUB_SHA" -R "$GITHUB_REPOSITORY"
