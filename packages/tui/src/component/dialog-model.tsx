@@ -231,7 +231,8 @@ function DialogConnectedModels(props: {
           command: "model.dialog.usage",
           title: newDesigns() ? "usage" : "Usage",
           selection: "none",
-          hidden: !limits.info(),
+          // Isolated build: the usage dialog shows only OpenCode Console limits, which this build does not offer.
+          hidden: true,
           onTrigger: () => dialog.replace(() => <DialogUsage />),
         },
         {

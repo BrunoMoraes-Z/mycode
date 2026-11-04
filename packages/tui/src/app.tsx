@@ -960,6 +960,8 @@ function App() {
         title: "View usage",
         category: "Agent",
         slash: { name: "usage" },
+        // Isolated build: /usage shows only OpenCode Console limits, which this build does not offer.
+        enabled: false,
         run: () => {
           dialog.replace(() => <DialogUsage />)
         },
