@@ -345,6 +345,10 @@ export type ArtifactID = string
 
 export type ArtifactTime = { created: number; updated: number }
 
+export type JobStatus = "running" | "completed" | "error" | "cancelled"
+
+export type JobTime = { started: number; completed?: number }
+
 export type ReferenceGitSource = { type: "git"; repository: string; branch?: string }
 
 export type VcsBranch = { current?: string; default?: string }
@@ -946,6 +950,40 @@ export type ArtifactInfo = {
   entry: string
   url: string
   time: ArtifactTime
+}
+
+export type JobShell = {
+  kind: "shell"
+  id: string
+  sessionID: SessionID
+  status: JobStatus
+  title?: string
+  time: JobTime
+  shellID: string
+  command: string
+}
+
+export type JobSubagent = {
+  kind: "subagent"
+  id: string
+  sessionID: SessionID
+  status: JobStatus
+  title?: string
+  time: JobTime
+  childSessionID: SessionID
+  agent: string
+  description: string
+}
+
+export type JobImage = {
+  kind: "image"
+  id: string
+  sessionID: SessionID
+  status: JobStatus
+  title?: string
+  time: JobTime
+  path: string
+  model: string
 }
 
 export type VcsInfo = { provider?: string; branch: VcsBranch }
@@ -2212,6 +2250,8 @@ export type ScheduleWhen = ScheduleWhenIn | ScheduleWhenAt | ScheduleWhenEvery |
 
 export type ArtifactContent = { info: ArtifactInfo; files: { [x: string]: string } }
 
+export type JobInfo = JobShell | JobSubagent | JobImage
+
 export type SessionInboxMove = {
   id: SessionMessageID
   sessionID: SessionID
@@ -2366,6 +2406,7 @@ export type ConfigEntry =
             | "mcp.use"
             | "skill.use"
             | "plugin.use"
+            | "websearch.use"
           resource: string
           effect: "allow" | "deny"
         }>
@@ -2537,6 +2578,7 @@ export type ConfigEntry =
               | "mcp.use"
               | "skill.use"
               | "plugin.use"
+              | "websearch.use"
             resource: string
             effect: "allow" | "deny"
           }>
@@ -4664,6 +4706,15 @@ export type ExperimentalArtifactsViewInput = {
 }
 
 export type ExperimentalArtifactsViewOutput = globalThis.Uint8Array
+
+export type ExperimentalJobListInput = {
+  readonly sessionID?: string | undefined
+  readonly kind?: ("shell" | "subagent" | "image") | undefined
+  readonly status?: ("running" | "completed" | "error" | "cancelled") | undefined
+  readonly descendants?: boolean | undefined
+}
+
+export type ExperimentalJobListOutput = { data: Array<JobInfo> }["data"]
 
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
