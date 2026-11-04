@@ -42,6 +42,7 @@ const info = (budgets: UsageLimitsBudget[], go = false): UsageLimitsInfo => ({
       }
     : {}),
   budgets,
+  subscriptions: [],
 })
 
 function UsageStory(props: { info: UsageLimitsInfo; model?: CurrentModel; credits?: boolean }) {

@@ -59,6 +59,7 @@ it.live("returns the usage limits of the OpenCode Console workspace a location i
           resetsAt: 1793491200000,
         },
       ],
+      subscriptions: [],
     }
     const result = yield* request(() => Effect.succeed(limits))
 

@@ -366,17 +366,17 @@ export type WebSearchResult = { url: string; title?: string; content?: string; t
 
 export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: number }
 
-export type UsageLimitsCopilotQuota = {
+export type UsageLimitsSubscriptionMeter = {
   id: string
-  entitlement: number
-  remaining: number
-  percentRemaining: number
-  unlimited: boolean
-  overagePermitted: boolean
-  overageCount: number
+  label: string
+  percent: number
+  limited: boolean
+  resetsAt?: number
+  used?: number
+  total?: number
+  unit?: string
+  overage: boolean
 }
-
-export type UsageLimitsChatGPTWindow = { percent: number; seconds: number; resetsAt: number }
 
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
@@ -954,18 +954,11 @@ export type WebSearchProvider = { id: WebSearchID; name: string }
 
 export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMeter; monthly: UsageLimitsMeter }
 
-export type UsageLimitsCopilot = {
+export type UsageLimitsSubscription = {
+  providerID: ProviderID
+  name: string
   plan: string
-  tokenBased: boolean
-  resetsAt?: number
-  quotas: Array<UsageLimitsCopilotQuota>
-}
-
-export type UsageLimitsChatGPT = {
-  plan: string
-  limited: boolean
-  primary?: UsageLimitsChatGPTWindow
-  secondary?: UsageLimitsChatGPTWindow
+  meters: Array<UsageLimitsSubscriptionMeter>
 }
 
 export type ConfigModelCapabilities = {
@@ -2556,8 +2549,7 @@ export type UsageLimitsInfo = {
   workspace?: { id: string; name?: string; usageURL: string }
   go?: UsageLimitsGo
   budgets: Array<UsageLimitsBudget>
-  copilot?: UsageLimitsCopilot
-  chatgpt?: UsageLimitsChatGPT
+  subscriptions: Array<UsageLimitsSubscription>
 }
 
 export type GenerateImageResponse = { data: GenerateImageResult }

@@ -1,6 +1,5 @@
 import HomeFooter from "../feature-plugins/home/footer"
-import ChatGPTUsage from "../feature-plugins/usage/chatgpt"
-import CopilotUsage from "../feature-plugins/usage/copilot"
+import SubscriptionUsage from "../feature-plugins/usage/subscription"
 import PromptBtw from "../feature-plugins/prompt/btw"
 import PromptFooter from "../feature-plugins/prompt/footer"
 import SidebarContext from "../feature-plugins/sidebar/context"
@@ -22,8 +21,7 @@ export const builtins = [
   PromptBtw,
   SidebarContext,
   SidebarLimit,
-  CopilotUsage,
-  ChatGPTUsage,
+  SubscriptionUsage,
   SidebarMcp,
   SidebarTodo,
   SidebarFooter,

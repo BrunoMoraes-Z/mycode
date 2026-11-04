@@ -343,7 +343,7 @@ export const settings: Setting[] = [
   {
     title: "Usage",
     category: "GitHub Copilot",
-    path: ["copilot_usage", "enabled"],
+    path: ["subscription_usage", "github-copilot", "enabled"],
     description: "Whether AI credit usage shows while a GitHub Copilot model is selected",
     default: true,
     values: [false, true],
@@ -353,7 +353,7 @@ export const settings: Setting[] = [
   {
     title: "Sidebar",
     category: "GitHub Copilot",
-    path: ["copilot_usage", "sidebar"],
+    path: ["subscription_usage", "github-copilot", "sidebar"],
     description: "Whether Copilot usage shows in the sidebar",
     default: true,
     values: [false, true],
@@ -363,7 +363,7 @@ export const settings: Setting[] = [
   {
     title: "Prompt footer",
     category: "GitHub Copilot",
-    path: ["copilot_usage", "footer"],
+    path: ["subscription_usage", "github-copilot", "footer"],
     description: "Whether Copilot usage shows below the prompt",
     default: true,
     values: [false, true],
@@ -373,7 +373,7 @@ export const settings: Setting[] = [
   {
     title: "Usage",
     category: "ChatGPT",
-    path: ["chatgpt_usage", "enabled"],
+    path: ["subscription_usage", "openai", "enabled"],
     description: "Whether subscription usage (5-hour and weekly) shows while an OpenAI model is selected",
     default: true,
     values: [false, true],
@@ -383,7 +383,7 @@ export const settings: Setting[] = [
   {
     title: "Sidebar",
     category: "ChatGPT",
-    path: ["chatgpt_usage", "sidebar"],
+    path: ["subscription_usage", "openai", "sidebar"],
     description: "Whether ChatGPT usage shows in the sidebar",
     default: true,
     values: [false, true],
@@ -393,7 +393,7 @@ export const settings: Setting[] = [
   {
     title: "Prompt footer",
     category: "ChatGPT",
-    path: ["chatgpt_usage", "footer"],
+    path: ["subscription_usage", "openai", "footer"],
     description: "Whether ChatGPT usage shows below the prompt",
     default: true,
     values: [false, true],

@@ -252,6 +252,20 @@ export const Info = Schema.Struct({
     description: "Show the release highlights once after OpenCode updates",
   }),
   mouse: Schema.optional(Schema.Boolean).annotate({ description: "Enable terminal mouse capture" }),
+  subscription_usage: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        enabled: Schema.optional(Schema.Boolean).annotate({
+          description: "Show the subscription's usage while one of the provider's models is selected",
+        }),
+        sidebar: Schema.optional(Schema.Boolean).annotate({ description: "Show the usage in the sidebar" }),
+        footer: Schema.optional(Schema.Boolean).annotate({ description: "Show the usage in the prompt footer" }),
+      }),
+    ),
+  ).annotate({
+    description: "Subscription usage display settings by provider ID, such as `github-copilot` or `openai`",
+  }),
   copilot_usage: Schema.optional(
     Schema.Struct({
       enabled: Schema.optional(Schema.Boolean).annotate({
@@ -260,7 +274,7 @@ export const Info = Schema.Struct({
       sidebar: Schema.optional(Schema.Boolean).annotate({ description: "Show GitHub Copilot usage in the sidebar" }),
       footer: Schema.optional(Schema.Boolean).annotate({ description: "Show GitHub Copilot usage in the prompt footer" }),
     }),
-  ).annotate({ description: "GitHub Copilot usage display settings" }),
+  ).annotate({ description: "Deprecated: use `subscription_usage.github-copilot`. Removed in the next minor." }),
   chatgpt_usage: Schema.optional(
     Schema.Struct({
       enabled: Schema.optional(Schema.Boolean).annotate({
@@ -269,7 +283,7 @@ export const Info = Schema.Struct({
       sidebar: Schema.optional(Schema.Boolean).annotate({ description: "Show ChatGPT usage in the sidebar" }),
       footer: Schema.optional(Schema.Boolean).annotate({ description: "Show ChatGPT usage in the prompt footer" }),
     }),
-  ).annotate({ description: "ChatGPT subscription usage display settings" }),
+  ).annotate({ description: "Deprecated: use `subscription_usage.openai`. Removed in the next minor." }),
   cursor: Schema.optional(Cursor),
 })
 export type Info = Schema.Schema.Type<typeof Info>

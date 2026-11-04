@@ -62,54 +62,39 @@ export const Budget = Schema.Struct({
   resetsAt: Instant,
 }).annotate({ identifier: "UsageLimits.Budget" })
 
-/** One quota of the GitHub Copilot plan, as `copilot_internal/user` reports it in `quota_snapshots`. */
-export interface CopilotQuota extends Schema.Schema.Type<typeof CopilotQuota> {}
-export const CopilotQuota = Schema.Struct({
-  /** GitHub's quota ID, such as `premium_interactions`, `chat` or `completions`. */
+/** One allowance of a provider subscription, such as a rate-limit window or a monthly quota. */
+export interface SubscriptionMeter extends Schema.Schema.Type<typeof SubscriptionMeter> {}
+export const SubscriptionMeter = Schema.Struct({
+  /** The provider's ID for the allowance, such as `premium_interactions` or `primary`. */
   id: Schema.String,
-  /** The plan's allowance for the period: AI credits when `tokenBased`, otherwise premium requests. */
-  entitlement: Schema.Finite,
-  remaining: Schema.Finite,
-  percentRemaining: Percent,
-  unlimited: Schema.Boolean,
-  /** Usage past the entitlement is billed instead of refused. */
-  overagePermitted: Schema.Boolean,
-  overageCount: Schema.Finite,
-}).annotate({ identifier: "UsageLimits.CopilotQuota" })
-
-/** The GitHub Copilot subscription of the connected GitHub account. */
-export interface Copilot extends Schema.Schema.Type<typeof Copilot> {}
-export const Copilot = Schema.Struct({
-  /** The plan GitHub reports, such as `individual`, `business` or `enterprise`. */
-  plan: Schema.String,
-  /** Quotas count AI credits (token-based billing) rather than premium requests. */
-  tokenBased: Schema.Boolean,
-  resetsAt: Instant.pipe(optional),
-  quotas: Schema.Array(CopilotQuota),
-}).annotate({ identifier: "UsageLimits.Copilot" })
-
-/** One rate-limit window of a ChatGPT subscription, as Codex reports it. */
-export interface ChatGPTWindow extends Schema.Schema.Type<typeof ChatGPTWindow> {}
-export const ChatGPTWindow = Schema.Struct({
-  /** How much of the window's allowance is used. */
+  /** A short name for the allowance, such as `5h`, `Week` or `AI credits`. */
+  label: Schema.String,
+  /** How much of the allowance is used. */
   percent: Percent,
-  /** The window's length: 5 hours (18000) for the short window, a week (604800) for the long one. */
-  seconds: Schema.Finite,
-  resetsAt: Instant,
-}).annotate({ identifier: "UsageLimits.ChatGPTWindow" })
-
-/** The Codex usage of the ChatGPT subscription the OpenAI provider signs in with. */
-export interface ChatGPT extends Schema.Schema.Type<typeof ChatGPT> {}
-export const ChatGPT = Schema.Struct({
-  /** The plan ChatGPT reports, such as `plus`, `pro` or `team`. */
-  plan: Schema.String,
-  /** Codex refuses requests until a window resets. */
+  /** The provider refuses requests until the allowance resets. */
   limited: Schema.Boolean,
-  /** The short (5-hour) window. */
-  primary: ChatGPTWindow.pipe(optional),
-  /** The long (weekly) window. */
-  secondary: ChatGPTWindow.pipe(optional),
-}).annotate({ identifier: "UsageLimits.ChatGPT" })
+  resetsAt: Instant.pipe(optional),
+  /** The amount used, in `unit`, when the provider counts the allowance. */
+  used: Schema.Finite.pipe(optional),
+  /** The allowance, in `unit`, when the provider counts it. */
+  total: Schema.Finite.pipe(optional),
+  /** What `used` and `total` count, such as `premium requests`. */
+  unit: Schema.String.pipe(optional),
+  /** Usage past the allowance is billed instead of refused. */
+  overage: Schema.Boolean,
+}).annotate({ identifier: "UsageLimits.SubscriptionMeter" })
+
+/** The usage of a provider subscription a location signs in with, such as GitHub Copilot or ChatGPT. */
+export interface Subscription extends Schema.Schema.Type<typeof Subscription> {}
+export const Subscription = Schema.Struct({
+  /** The provider whose models spend from the subscription. */
+  providerID: Provider.ID,
+  /** The subscription's display name, such as `ChatGPT Plus` or `GitHub Copilot`. */
+  name: Schema.String,
+  /** The plan the provider reports, such as `plus` or `business`; arbitrary, `unknown` when not reported. */
+  plan: Schema.String,
+  meters: Schema.Array(SubscriptionMeter),
+}).annotate({ identifier: "UsageLimits.Subscription" })
 
 /** The usage limits of the OpenCode Console workspace and the subscriptions a location is signed in to. */
 export interface Info extends Schema.Schema.Type<typeof Info> {}
@@ -122,6 +107,5 @@ export const Info = Schema.Struct({
   }).pipe(optional),
   go: Go.pipe(optional),
   budgets: Schema.Array(Budget),
-  copilot: Copilot.pipe(optional),
-  chatgpt: ChatGPT.pipe(optional),
+  subscriptions: Schema.Array(Subscription),
 }).annotate({ identifier: "UsageLimits.Info" })

@@ -159,6 +159,7 @@ it.effect("reads the member's Go allowance and budgets from the Console they sig
           resetsAt: Date.parse("2026-11-01T00:00:00.000Z"),
         },
       ],
+      subscriptions: [],
     })
     // Console reads the workspace from x-org-id; inference, which serves Go, from x-opencode-org-id.
     expect(
@@ -196,6 +197,7 @@ it.effect("has no Go allowance or budgets to show where Console refuses them", (
         usageURL: "https://dev.opencode.ai/console/wrk_anomaly/activity/overview",
       },
       budgets: [],
+      subscriptions: [],
     })
   }),
 )
@@ -265,31 +267,27 @@ it.effect("reads the GitHub Copilot plan's AI credits with the stored GitHub tok
     ])
     expect(limits).toEqual({
       budgets: [],
-      copilot: {
-        plan: "business",
-        tokenBased: true,
-        resetsAt: Date.parse("2026-12-01T00:00:00.000Z"),
-        quotas: [
-          {
-            id: "chat",
-            entitlement: 0,
-            remaining: 0,
-            percentRemaining: 100,
-            unlimited: true,
-            overagePermitted: true,
-            overageCount: 0,
-          },
-          {
-            id: "premium_interactions",
-            entitlement: 25000,
-            remaining: 24204.3,
-            percentRemaining: 96.8,
-            unlimited: false,
-            overagePermitted: true,
-            overageCount: 0,
-          },
-        ],
-      },
+      subscriptions: [
+        {
+          providerID: Provider.ID.make("github-copilot"),
+          name: "GitHub Copilot",
+          plan: "business",
+          // The unlimited chat quota has nothing to run out of.
+          meters: [
+            {
+              id: "premium_interactions",
+              label: "AI credits",
+              percent: expect.closeTo(3.2, 5),
+              limited: false,
+              resetsAt: Date.parse("2026-12-01T00:00:00.000Z"),
+              used: expect.closeTo(795.7, 5),
+              total: 25000,
+              unit: "AI credits",
+              overage: true,
+            },
+          ],
+        },
+      ],
     })
   }),
 )
@@ -357,12 +355,17 @@ it.effect("reads the ChatGPT subscription's 5-hour and weekly Codex windows", ()
     ).toEqual([["https://chatgpt.com/backend-api/wham/usage", "Bearer chatgpt-access", "acct_1"]])
     expect(limits).toEqual({
       budgets: [],
-      chatgpt: {
-        plan: "plus",
-        limited: false,
-        primary: { percent: 3, seconds: 18000, resetsAt: 1793731306000 },
-        secondary: { percent: 17, seconds: 604800, resetsAt: 1794179388000 },
-      },
+      subscriptions: [
+        {
+          providerID: Provider.ID.make("openai"),
+          name: "ChatGPT Plus",
+          plan: "plus",
+          meters: [
+            { id: "primary", label: "5h", percent: 3, limited: false, resetsAt: 1793731306000, overage: false },
+            { id: "secondary", label: "Week", percent: 17, limited: false, resetsAt: 1794179388000, overage: false },
+          ],
+        },
+      ],
     })
   }),
 )
@@ -388,6 +391,11 @@ it.effect("keeps the subscriptions that answer when another one fails", () =>
       copilot,
       chatgpt,
     )
-    expect(limits).toEqual({ budgets: [], copilot: { plan: "individual", tokenBased: false, quotas: [] } })
+    expect(limits).toEqual({
+      budgets: [],
+      subscriptions: [
+        { providerID: Provider.ID.make("github-copilot"), name: "GitHub Copilot", plan: "individual", meters: [] },
+      ],
+    })
   }),
 )

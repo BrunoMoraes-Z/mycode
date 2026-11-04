@@ -30,6 +30,7 @@ const budget = (input: Partial<UsageLimitsBudget> & Pick<UsageLimitsBudget, "id"
 const info = (...budgets: UsageLimitsBudget[]): UsageLimitsInfo => ({
   workspace: { id: "wrk_1", name: "Acme", usageURL: "https://opencode.ai/wrk_1/activity/overview" },
   budgets,
+  subscriptions: [],
 })
 
 // One request that fills Sol's context costs $4, so $12 covers three.
