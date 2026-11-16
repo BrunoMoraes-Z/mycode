@@ -23,14 +23,17 @@ import {
 } from "./machine"
 import { pathKey } from "@/workspaces/path-key"
 import { useServerHealth } from "@/runtime/server/health"
+import { selectServerHostname } from "@/runtime/server/health-machine"
 import { createServerSdkContext } from "./client"
 import { createServerSyncContext } from "./sync"
 import { createData, createSessionRetention } from "@opencode/client/solid"
 import type { ServerScope } from "@/runtime/server/scope"
 import { createPermissionAutoApprover } from "@/session/requests/auto-approve"
+import { createSessionMessageHandoffs } from "@/session/handoff"
 import { createServerNotificationState } from "@/shell/notifications/notification"
 import { createNotificationCoordinator } from "@/shell/notifications/coordinator"
 import { useCurrentRoute } from "@/shell/state/layout"
+import { createSessionPreferences } from "@/shell/state/session-preferences"
 import { useTabs } from "@/shell/tabs/tabs"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { createDesktopData } from "./data"
@@ -50,6 +53,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
   init: () => {
     const server = useServers()
     const models = createGlobalModels()
+    const sessionPreferences = createSessionPreferences()
     const notificationCoordinator = createNotificationCoordinator()
     const owner = getOwner()
 
@@ -77,6 +81,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
                 () => server.local(effect.conn),
                 server.projects.forServer(effect.key),
                 notificationCoordinator,
+                sessionPreferences,
               ),
               dispose,
             }),
@@ -89,15 +94,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
 
     const serverHealth = useServerHealth(
       () => server.list,
-      () => true,
-      (probe) =>
-        dispatch({
-          type: "health.reported",
-          key: probe.key,
-          auth: probe.auth,
-          healthy: probe.health.healthy,
-          unauthorized: !!probe.health.unauthorized,
-        }),
+      (probe) => dispatch({ type: "health.reported", key: probe.key, auth: probe.auth, result: probe.result }),
     )
 
     // Runs during updates, so listed servers have a controller before anything reads them, including on first render.
@@ -117,7 +114,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
     createEffect(() => {
       for (const conn of server.list) {
         const key = ServerConnection.key(conn)
-        const hostname = serverHealth.status[key]?.hostname
+        const hostname = selectServerHostname(serverHealth.status[key])
 
         if (hostname) server.setHostname(key, hostname)
       }
@@ -130,6 +127,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
         retry: serverHealth.retry,
       },
       models,
+      sessionPreferences,
       /** Runs each keyed sound and system notification once across windows; notifications only while none has focus. */
       notifications: notificationCoordinator,
       /** The live controller of a server, or undefined while it is unlisted or rejects our credentials. Reactive. */
@@ -204,6 +202,7 @@ function createServerController(
   isLocal: Accessor<boolean>,
   projects: ReturnType<typeof createServerProjects>,
   notificationCoordinator: ReturnType<typeof createNotificationCoordinator>,
+  sessionPreferences: ReturnType<typeof createSessionPreferences>,
 ) {
   const language = useLanguage()
   const settings = useSettings()
@@ -260,14 +259,26 @@ function createServerController(
 
   const sync = createServerSyncContext(sdk, data)
   const autoApprove = createPermissionAutoApprover({ sdk, data })
-  const notification = createServerNotificationState({ sdk, data, key: connKey, coordinator: notificationCoordinator })
+  onCleanup(data.on("session.deleted", (event) => sessionPreferences.forget(connKey, event.data.sessionID)))
+
+  const notification = createServerNotificationState({
+    sdk,
+    data,
+    key: connKey,
+    coordinator: notificationCoordinator,
+    muted: (id) => sessionPreferences.muted(connKey, id),
+    preferencesLoaded: sessionPreferences.ready.promise,
+  })
+
+  // Owned by the server, so a first prompt's handoff outlives the draft that sent it.
+  const handoff = createSessionMessageHandoffs({ sdk, data })
 
   // Projects whose repository has no root commit share the `global` ID; their name and icon stay local to the
   // directory because the server cannot tell them apart.
   function withLocalMeta(project: Project): Project {
     if (project.id !== "global") return project
 
-    return { ...project, ...sync.child(project.worktree, { bootstrap: false })[0].projectMeta }
+    return { ...project, ...sync.child(project.worktree)[0].projectMeta }
   }
 
   const list = createMemo(() => sync.data.project.map(withLocalMeta))
@@ -367,6 +378,7 @@ function createServerController(
     },
     notification,
     autoApprove,
+    handoff,
   }
 }
 
