@@ -255,6 +255,9 @@ export const Info = Schema.Struct({
     description: "Show the release highlights once after OpenCode updates",
   }),
   mouse: Schema.optional(Schema.Boolean).annotate({ description: "Enable terminal mouse capture" }),
+  mcp_failure_toast: Schema.optional(Schema.Boolean).annotate({
+    description: "Show a toast when an MCP server fails to start or connect. Off by default",
+  }),
   subscription_usage: Schema.optional(
     Schema.Record(
       Schema.String,

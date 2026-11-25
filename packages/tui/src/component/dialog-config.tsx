@@ -351,6 +351,16 @@ export const settings: Setting[] = [
     keywords: ["what's new", "changelog", "release notes"],
   },
   {
+    title: "MCP failures",
+    category: "Alerts",
+    path: ["mcp_failure_toast"],
+    description: "Whether a toast is shown when an MCP server fails",
+    default: false,
+    values: [false, true],
+    labels: ["off", "on"],
+    keywords: ["mcp", "server error", "notification", "toast"],
+  },
+  {
     title: "Usage",
     category: "GitHub Copilot",
     path: ["subscription_usage", "github-copilot", "enabled"],

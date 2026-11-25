@@ -592,7 +592,8 @@ function App() {
           message: `Connect "${server.name}" to use its tools.`,
           action: { label: "Open MCP servers", run: () => keymap.dispatch("mcp.list") },
         })
-      else
+      // Isolated build: failure toasts are opt-in through /settings, since a broken MCP server repeats them on every start.
+      else if (config.data.mcp_failure_toast === true)
         toast.show({
           variant: "error",
           title: `MCP server failed: ${server.name}`,
